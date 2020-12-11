@@ -50,26 +50,18 @@ impl<F: Field + PrimeField, G: GroupType<F>> ConstrainedProgram<F, G> {
         let mut results = vec![];
 
         match statement {
-            Statement::Return(expression, span) => {
+            Statement::Return(statement) => {
                 let return_value = (
                     indicator,
-                    self.enforce_return_statement(cs, file_scope, function_scope, expression, return_type, &span)?,
+                    self.enforce_return_statement(cs, file_scope, function_scope, return_type, statement)?,
                 );
 
                 results.push(return_value);
             }
-            Statement::Definition(declare, variables, expressions, span) => {
-                self.enforce_definition_statement(
-                    cs,
-                    file_scope,
-                    function_scope,
-                    declare,
-                    variables,
-                    expressions,
-                    &span,
-                )?;
+            Statement::Definition(statement) => {
+                self.enforce_definition_statement(cs, file_scope, function_scope, statement)?;
             }
-            Statement::Assign(variable, expression, span) => {
+            Statement::Assign(statement) => {
                 self.enforce_assign_statement(
                     cs,
                     file_scope,
@@ -77,62 +69,69 @@ impl<F: Field + PrimeField, G: GroupType<F>> ConstrainedProgram<F, G> {
                     declared_circuit_reference,
                     mut_self,
                     indicator,
-                    variable,
-                    expression,
-                    &span,
+                    statement,
                 )?;
             }
-            Statement::Conditional(statement, span) => {
-                let mut result = self.enforce_conditional_statement(
+            Statement::Conditional(statement) => {
+                let result = self.enforce_conditional_statement(
                     cs,
+                    file_scope,
+                    function_scope,
+                    indicator,
+                    return_type,
+                    mut_self,
+                    declared_circuit_reference,
+                    statement,
+                )?;
+
+                results.extend(result);
+            }
+            Statement::Iteration(statement) => {
+                let result = self.enforce_iteration_statement(
+                    cs,
+                    file_scope,
+                    function_scope,
+                    indicator,
+                    return_type,
+                    mut_self,
+                    statement,
+                )?;
+
+                results.extend(result);
+            }
+            Statement::Console(statement) => {
+                self.evaluate_console_function_call(cs, file_scope, function_scope, indicator, statement)?;
+            }
+            Statement::Expression(statement) => {
+                let expression_string = statement.expression.to_string();
+                let value = self.enforce_expression(cs, file_scope, function_scope, None, statement.expression)?;
+                // handle empty return value cases
+                match &value {
+                    ConstrainedValue::Tuple(values) => {
+                        if !values.is_empty() {
+                            return Err(StatementError::unassigned(expression_string, statement.span));
+                        }
+                    }
+                    _ => return Err(StatementError::unassigned(expression_string, statement.span)),
+                }
+
+                let result = (indicator, value);
+
+                results.push(result);
+            }
+            Statement::Block(statement) => {
+                let span = statement.span.clone();
+                let result = self.evaluate_block(
+                    &mut cs.ns(|| format!("block {}:{}", &span.line, &span.start)),
                     file_scope,
                     function_scope,
                     indicator,
                     statement,
                     return_type,
                     mut_self,
-                    &span,
                 )?;
 
-                results.append(&mut result);
-            }
-            Statement::Iteration(index, start_stop, block, span) => {
-                let mut result = self.enforce_iteration_statement(
-                    cs,
-                    file_scope,
-                    function_scope,
-                    indicator,
-                    index,
-                    start_stop.0,
-                    start_stop.1,
-                    block,
-                    return_type,
-                    mut_self,
-                    &span,
-                )?;
-
-                results.append(&mut result);
-            }
-            Statement::Console(console) => {
-                self.evaluate_console_function_call(cs, file_scope, function_scope, indicator, console)?;
-            }
-            Statement::Expression(expression, span) => {
-                let expression_string = expression.to_string();
-                let value = self.enforce_expression(cs, file_scope, function_scope, None, expression)?;
-
-                // handle empty return value cases
-                match &value {
-                    ConstrainedValue::Tuple(values) => {
-                        if !values.is_empty() {
-                            return Err(StatementError::unassigned(expression_string, span));
-                        }
-                    }
-                    _ => return Err(StatementError::unassigned(expression_string, span)),
-                }
-
-                let result = (indicator, value);
-
-                results.push(result);
+                results.extend(result);
             }
         };
 
